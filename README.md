@@ -1,5 +1,46 @@
 # Restoring a Photon to factory clean state
 
+> **See also [CLAUDE.md](CLAUDE.md)** for terse operational notes, the listening-mode
+> serial protocol, LED-state table, and the USB/CDC gotchas hit while doing this for real.
+
+## Taking ownership of a Photon owned by another account (CLI 3.x)
+
+The instructions further down ("Resetting ownership (from another user)") were written for
+the phone app and the old CLI. **`particle setup` was removed in CLI 3.x**, and
+`particle device add` only sends an *email transfer request* the old owner must approve —
+it cannot force-claim. The phone app can still take ownership in close proximity, but if you
+want to do it from the CLI, reproduce what `setup` used to do by hand. This is the legitimate
+Gen2 "physical-possession" takeover — **no email, no old-owner approval**:
+
+1. **Generate a claim code on your account** (your token is in `~/.particle/particle.config.json`):
+   ```bash
+   TOKEN=$(grep -o '"access_token": *"[^"]*"' ~/.particle/particle.config.json | sed 's/.*"access_token": *"//;s/"//')
+   curl -s -X POST "https://api.particle.io/v1/device_claims" -d "access_token=$TOKEN"
+   # -> {"claim_code":"<63-char code>", ...}
+   ```
+2. Put the Photon in **listening mode** (hold SETUP until blinking blue).
+3. **Push the claim code over serial** (9600 baud): write `C`, wait for
+   `Enter 63-digit claim code:`, then send the 63-char code + newline. The device replies
+   `Claim code set to: <code>`. (See CLAUDE.md for a ready-to-run PowerShell snippet — send the
+   code char-by-char or the USB serial port tends to drop.)
+4. **Set Wi-Fi** (Photon is 2.4 GHz only):
+   ```bash
+   particle serial wifi --port COM26 --file wifi.json
+   # wifi.json: {"network":"SSID","security":"WPA2_AES","password":"..."}
+   ```
+5. **Reset** so it reconnects: `particle usb reset <deviceID>`. When it reaches the cloud
+   (breathing cyan) it presents the claim code and **ownership transfers to you**.
+6. Verify and rename:
+   ```bash
+   particle list | grep <deviceID>
+   particle device rename <deviceID> <NewName>
+   ```
+
+**Gotcha:** the transfer only completes once the device is actually cloud-connected
+(breathing cyan). If it's *breathing green* (Wi-Fi OK, cloud handshake failing), fix the keys
+first — see "Resetting keys" below — or the claim never lands. And note that clearing the DCT
+claim code (next section) does **not** unclaim it on the cloud; it only wipes the device's
+local copy, so don't clear it *after* you've set your own code.
 
 ## Resetting settings
 
