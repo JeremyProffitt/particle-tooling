@@ -178,6 +178,13 @@ old account of his). End-to-end, what actually worked:
 Net: the only path that force-claims a Gen2 device from the CLI is the claim-code-over-serial
 flow, and it only completes once the device actually reaches breathing cyan.
 
+A **second Photon** (`440027001447353136383631`, also a different account, same batch) was
+then claimed **end-to-end with `claim-photon.bat`**, which validated the scripted flow — and
+surfaced two bugs since fixed: the batch must push the **claim code before Wi-Fi** (Wi-Fi
+restarts the device out of listening mode), and the device-resolution block had to be
+flattened (a nested `if`/`for` was dropping `COM_PORT`, so an empty `-Port` reached the claim
+step). With those fixed the script claims a device in one run.
+
 ## Sources of Particle information
 
 - **https://github.com/rickkas7** — Rick Kaseguma (long-time Particle community/SE). Tons of

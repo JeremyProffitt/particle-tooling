@@ -80,7 +80,10 @@ The batch then prompts you to put the device into the right LED mode between ste
 serial push is done by the companion **`send-claim-code.ps1`** (pure batch can't do reliable
 serial I/O). See [CLAUDE.md](CLAUDE.md) for the protocol details and a real worked example.
 
-> **Real run (2026-06-14):** used this exact flow to take a Photon
+> **Verified:** `claim-photon.bat` claimed a Photon (`440027001447…`) end-to-end in a single
+> run — discovery menu → claim code → Wi-Fi → online and claimed.
+>
+> **Real run (2026-06-14):** first did this flow by hand to take a Photon
 > (`330041000d47…`) off an old account onto the current one. The one snag worth knowing:
 > if the device goes *breathing green* after Wi-Fi setup, the claim code never reaches the
 > cloud — fix connectivity (keys) first; the transfer only completes at breathing cyan.
