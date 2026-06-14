@@ -125,3 +125,57 @@ particle list | grep <id>             # is it in my account / online?
 particle keys doctor <id>             # regen + sync keys (DFU mode) — fixes breathing green
 particle keys server                  # restore Particle cloud server key (DFU mode)
 ```
+
+## Scripted workflow
+
+`claim-photon.bat` automates the whole thing (update → Wi-Fi → claim → verify/rename):
+
+1. `copy .env.example .env` and fill in `WIFI_SSID` / `WIFI_PASSWORD`
+   (optionally `COM_PORT`, `DEVICE_ID`, `DEVICE_NAME`, `SKIP_UPDATE`). `.env` is gitignored.
+2. Run `claim-photon.bat`. If `COM_PORT` is unset it runs **discovery** (`select-device.ps1`):
+   every device on serial is listed with its ID, cloud name, Device OS version, and
+   online/offline status; with more than one connected you pick from a numbered menu
+   (a single device is auto-selected). It then prompts you to switch the device into the
+   right LED mode between steps (DFU/blinking-yellow for the optional Device OS update, then
+   listening/blinking-blue for Wi-Fi + claim), resets, and polls `particle list` until the
+   device is online and claimed, renaming it if `DEVICE_NAME` is set.
+
+`select-device.ps1` enriches each connected device: Device OS comes from a serial `i` probe
+(falling back to the cloud's `system_firmware_version`); name/online come from
+`GET /v1/devices`. Devices owned by another account show `(not in your account)`.
+
+`send-claim-code.ps1` is the helper the batch calls for step 3 — pure-batch can't do raw
+serial reliably. It reads the access token from the CLI config, asks the cloud for a claim
+code, and pushes it with the `C`/prompt protocol (char-by-char). Can be run standalone:
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\send-claim-code.ps1 -Port COM26`.
+
+## Worked example — claiming a Photon owned by another account (2026-06-14)
+
+Device `330041000d47353136383631`, a Photon already claimed to a *different* account
+(its serial suffix matched a whole batch of Jeremy's other Photons — almost certainly an
+old account of his). End-to-end, what actually worked:
+
+1. `particle device add <id>` → "That device belongs to someone else" (email-transfer only). Dead end.
+2. Generated a claim code via `POST /v1/device_claims`, put the device in listening mode,
+   pushed the code over serial. **First try went breathing green** (Wi-Fi OK, cloud handshake
+   failing) so the claim code never reached the cloud and ownership didn't move.
+3. Cleared the DCT claim code with `dfu-util ... -a 1 -s 1762:64 -D clear_claim.bin`, reset.
+   This time it came up **breathing cyan** — but with the claim code now wiped, so it just
+   reconnected as the old owner's device. (Lesson: clearing the DCT does NOT unclaim on the
+   cloud; only do it when starting over, not after setting your own code.)
+4. **Re-injected a fresh claim code** with the documented uppercase `C` protocol while the
+   device was healthy (got `Claim code set to: ...`), `particle usb reset`, and within a
+   minute `particle list` showed it online **under our account**.
+5. `particle device rename <id> Automatica-Particle-IR`. Done.
+
+Net: the only path that force-claims a Gen2 device from the CLI is the claim-code-over-serial
+flow, and it only completes once the device actually reaches breathing cyan.
+
+## Sources of Particle information
+
+- **https://github.com/rickkas7** — Rick Kaseguma (long-time Particle community/SE). Tons of
+  Photon/Boron/Argon examples, tutorials, and reset/claim tooling. The original
+  `photonreset` repo (clear_claim.bin, resetsettings.ino) this repo is based on lives here.
+- **https://github.com/particle-iot** — the official Particle org: `particle-cli`,
+  `particle-api-js`, Device OS (`device-os`), docs, and the firmware that defines the
+  listening-mode serial protocol and DCT layout referenced above.

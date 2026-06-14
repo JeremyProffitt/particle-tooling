@@ -42,6 +42,51 @@ first — see "Resetting keys" below — or the claim never lands. And note that
 claim code (next section) does **not** unclaim it on the cloud; it only wipes the device's
 local copy, so don't clear it *after* you've set your own code.
 
+### Scripted: `claim-photon.bat`
+
+The steps above are automated in **`claim-photon.bat`** (Windows). It updates Device OS
+(optional), sets Wi-Fi, generates + pushes a claim code, then resets, verifies, and renames:
+
+```bat
+copy .env.example .env       :: then edit WIFI_SSID / WIFI_PASSWORD / COM_PORT
+claim-photon.bat
+```
+
+`.env` (gitignored) holds the Wi-Fi settings and options:
+
+```
+WIFI_SSID=YourNetwork
+WIFI_PASSWORD=yourpassword
+WIFI_SECURITY=WPA2_AES
+COM_PORT=COM26
+DEVICE_ID=            # optional, auto-detected from COM_PORT
+DEVICE_NAME=          # optional, renames after a successful claim
+SKIP_UPDATE=          # optional, set to 1 to skip the Device OS update step
+```
+
+If `COM_PORT` is left blank, the script first runs **device discovery** (`select-device.ps1`)
+and shows every connected device with its ID, cloud name, Device OS version, and online
+status, letting you pick which to work with (a single device is auto-selected):
+
+```
+  #  Port   Device ID                  Name                         OS         Status
+  1  COM16  3c0025001947333438373833   garage-door-lights           3.3.1      online
+  2  COM26  330041000d47353136383631   Automatica-Particle-IR       3.3.1      online
+  3  COM27  440027001447353136383631   (not in your account)        ?          -
+```
+
+The batch then prompts you to put the device into the right LED mode between steps
+(blinking yellow for the update, blinking blue for Wi-Fi + claim). The actual claim-code
+serial push is done by the companion **`send-claim-code.ps1`** (pure batch can't do reliable
+serial I/O). See [CLAUDE.md](CLAUDE.md) for the protocol details and a real worked example.
+
+> **Real run (2026-06-14):** used this exact flow to take a Photon
+> (`330041000d47…`) off an old account onto the current one. The one snag worth knowing:
+> if the device goes *breathing green* after Wi-Fi setup, the claim code never reaches the
+> cloud — fix connectivity (keys) first; the transfer only completes at breathing cyan.
+> And clearing the DCT claim code does **not** unclaim on the cloud, so don't wipe it after
+> you've set your own code.
+
 ## Resetting settings
 
 Run this program to reset the antenna, IP configuration, Wi-Fi credentials and EEPROM:

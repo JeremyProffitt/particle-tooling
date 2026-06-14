@@ -1,0 +1,6 @@
+# Local secrets / credentials
+.env
+
+# Temp build artifacts
+*.bin.tmp
+photon_wifi.json
