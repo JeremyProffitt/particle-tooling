@@ -4,12 +4,15 @@ REM ============================================================================
 REM  claim-photon.bat
 REM  End-to-end prep + force-claim for a Particle Gen2 Photon over USB.
 REM
-REM  Steps:  (1) optional Device OS update   (DFU mode / blinking yellow)
-REM          (2) set Wi-Fi from .env         (listening mode / blinking blue)
-REM          (3) push a claim code           (listening mode / blinking blue)
-REM          (4) reset, verify, optional rename
+REM  Order matters: the claim code is pushed BEFORE Wi-Fi, because setting Wi-Fi
+REM  restarts the device (which then connects and presents the claim code, so the
+REM  cloud transfers ownership). Both happen in one listening-mode session.
 REM
-REM  Wi-Fi settings come from a .env file next to this script (see .env.example).
+REM  Steps:  (1) optional Device OS update   (DFU mode / blinking yellow)
+REM          (2) push a claim code           (listening mode / blinking blue)
+REM          (3) set Wi-Fi from .env         (listening mode -> device restarts)
+REM          (4) wait for cloud, verify, optional rename
+REM
 REM  Reproduces what the removed `particle setup` used to do, so you can take
 REM  ownership of a Photon you physically hold even if it's claimed elsewhere.
 REM ============================================================================
@@ -38,16 +41,18 @@ if not defined WIFI_PASSWORD ( echo [ERROR] WIFI_PASSWORD not set in .env & goto
 REM --- resolve device (discovery + selection) --------------------------------
 REM If COM_PORT is set in .env we trust it; otherwise discover every connected
 REM device, enrich with name/OS/online, and (when >1) show a menu to pick one.
-if not defined COM_PORT (
-  set "SELFILE=%TEMP%\photon_selection.env"
-  del "!SELFILE!" >nul 2>&1
-  echo [*] Discovering connected devices...
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0select-device.ps1" -OutFile "!SELFILE!"
-  if errorlevel 1 ( echo [ERROR] Device discovery/selection failed. & goto :fail )
-  if exist "!SELFILE!" for /f "usebackq eol=# tokens=1,* delims==" %%A in ("!SELFILE!") do set "%%A=%%B"
-  del "!SELFILE!" >nul 2>&1
-)
-if not defined COM_PORT ( echo [ERROR] No device selected. & goto :fail )
+if defined COM_PORT goto :have_port
+set "SELFILE=%TEMP%\photon_selection.env"
+del "%SELFILE%" >nul 2>&1
+echo [*] Discovering connected devices...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PSSELECT%" -OutFile "%SELFILE%"
+if errorlevel 1 ( echo [ERROR] Device discovery/selection failed. & goto :fail )
+if not exist "%SELFILE%" ( echo [ERROR] No device selected. & goto :fail )
+for /f "usebackq eol=# tokens=1,* delims==" %%A in ("%SELFILE%") do set "%%A=%%B"
+del "%SELFILE%" >nul 2>&1
+
+:have_port
+if not defined COM_PORT ( echo [ERROR] No COM_PORT resolved. & goto :fail )
 echo [*] Using port %COM_PORT%
 
 REM --- resolve device id (from serial list line for this port) ---------------
@@ -55,7 +60,7 @@ if not defined DEVICE_ID (
   for /f "tokens=5" %%i in ('particle serial list ^| findstr /I /C:"%COM_PORT% "') do set "DEVICE_ID=%%i"
 )
 if not defined DEVICE_ID (
-  echo [ERROR] Could not determine DEVICE_ID. Put the device in listening mode ^(blinking blue^) or set DEVICE_ID in .env.
+  echo [ERROR] Could not determine DEVICE_ID. Set DEVICE_ID in .env or ensure the device shows in 'particle serial list'.
   goto :fail
 )
 echo [*] Device ID: %DEVICE_ID%
@@ -76,11 +81,25 @@ if /I "%SKIP_UPDATE%"=="1" ( echo [1/4] Skipping Device OS update ^(SKIP_UPDATE=
 )
 
 REM ===========================================================================
-REM  STEP 2 - set Wi-Fi (requires listening mode / blinking blue)
+REM  Put device in LISTENING mode for steps 2 and 3 (one session)
 REM ===========================================================================
 echo.
-echo [2/4] Put the device in LISTENING mode ^(hold SETUP until blinking blue^).
+echo [*] Put the device in LISTENING mode ^(hold SETUP until blinking blue^), then continue.
 pause
+
+REM ===========================================================================
+REM  STEP 2 - generate + push claim code (listening mode, BEFORE Wi-Fi)
+REM ===========================================================================
+echo.
+echo [2/4] Generating a claim code on your account and pushing it over serial...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PSHELPER%" -Port %COM_PORT%
+if errorlevel 1 ( echo [ERROR] Claim-code push failed. Re-check listening mode ^(blinking blue^) on %COM_PORT% and retry. & goto :fail )
+
+REM ===========================================================================
+REM  STEP 3 - set Wi-Fi (still listening; this restarts the device so it
+REM           reconnects presenting the claim code -> ownership transfers)
+REM ===========================================================================
+echo.
 set "WIFIJSON=%TEMP%\photon_wifi.json"
 > "%WIFIJSON%" (
   echo {
@@ -89,32 +108,22 @@ set "WIFIJSON=%TEMP%\photon_wifi.json"
   echo   "password": "%WIFI_PASSWORD%"
   echo }
 )
-echo [2/4] Sending Wi-Fi credentials ^(SSID: %WIFI_SSID%, %WIFI_SECURITY%^)...
+echo [3/4] Sending Wi-Fi credentials ^(SSID: %WIFI_SSID%, %WIFI_SECURITY%^)...
 particle serial wifi --port %COM_PORT% --file "%WIFIJSON%"
 del "%WIFIJSON%" >nul 2>&1
-if errorlevel 1 ( echo [ERROR] Wi-Fi setup failed - is it in listening mode on %COM_PORT%? & goto :fail )
+if errorlevel 1 ( echo [ERROR] Wi-Fi setup failed - is it still in listening mode on %COM_PORT%? & goto :fail )
 
 REM ===========================================================================
-REM  STEP 3 - generate + push claim code (still in listening mode)
+REM  STEP 4 - wait for cloud, verify, optional rename
 REM ===========================================================================
 echo.
-echo [3/4] Generating a claim code on your account and pushing it over serial...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PSHELPER%" -Port %COM_PORT%
-if errorlevel 1 ( echo [ERROR] Claim-code push failed. Re-check listening mode and retry. & goto :fail )
-
-REM ===========================================================================
-REM  STEP 4 - reset, wait for cloud, verify, optional rename
-REM ===========================================================================
-echo.
-echo [4/4] Resetting device so it reconnects and the cloud transfers ownership...
-particle usb reset %DEVICE_ID% >nul 2>&1
-
-echo [4/4] Waiting for it to come online in your account ^(up to ~90s^)...
+echo [4/4] Waiting for it to connect and claim to your account ^(up to ~90s^)...
+echo       LED should go: blinking green -^> blinking cyan -^> breathing cyan.
 set /a tries=0
 :waitloop
 particle list | findstr /I /C:"%DEVICE_ID%" | findstr /I "online" >nul 2>&1 && goto :online
 set /a tries+=1
-if %tries% GEQ 30 ( echo [warn] Not online yet. Check LED: breathing cyan=ok, breathing green=fix keys, blinking green=Wi-Fi. & goto :showstate )
+if %tries% GEQ 30 ( echo [warn] Not online yet. breathing cyan=ok ^| breathing green=fix keys ^(particle keys doctor^) ^| blinking green=Wi-Fi creds. & goto :showstate )
 timeout /t 3 /nobreak >nul
 goto :waitloop
 

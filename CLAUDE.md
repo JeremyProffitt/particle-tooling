@@ -136,9 +136,16 @@ particle keys server                  # restore Particle cloud server key (DFU m
    every device on serial is listed with its ID, cloud name, Device OS version, and
    online/offline status; with more than one connected you pick from a numbered menu
    (a single device is auto-selected). It then prompts you to switch the device into the
-   right LED mode between steps (DFU/blinking-yellow for the optional Device OS update, then
-   listening/blinking-blue for Wi-Fi + claim), resets, and polls `particle list` until the
+   right LED mode (DFU/blinking-yellow for the optional Device OS update, then
+   listening/blinking-blue for the claim + Wi-Fi), and polls `particle list` until the
    device is online and claimed, renaming it if `DEVICE_NAME` is set.
+
+**Order matters:** the script pushes the **claim code first, then Wi-Fi** — both in one
+listening-mode session. Setting Wi-Fi restarts the Photon; it then reconnects presenting the
+stored claim code, and the cloud transfers ownership. Doing Wi-Fi first would restart the
+device out of listening mode before the claim code could be set (this was a real bug — the
+claim step found the device gone). No separate `usb reset` is needed; the Wi-Fi step is what
+restarts it.
 
 `select-device.ps1` enriches each connected device: Device OS comes from a serial `i` probe
 (falling back to the cloud's `system_firmware_version`); name/online come from
