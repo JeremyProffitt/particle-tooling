@@ -112,6 +112,12 @@ local copy. Don't clear it *after* setting your own claim code unless you mean t
 - `particle usb start-listening <id>` / `particle usb dfu <id>` can do this over USB, but the
   USB control request **times out if the device is busy** (e.g. mid-connect). Physical buttons
   are the reliable fallback.
+- **The COM port changes when the device enters/leaves listening mode** — it re-enumerates as
+  a different `COMxx`. A port captured during discovery (running mode) is stale by the time the
+  device is blinking blue. Always re-detect the port from `particle serial list` *after* the
+  device is in listening mode, keyed off the stable **device ID** (which never changes).
+  `claim-photon.bat` does exactly this; an early version trusted the discovery-time port and
+  failed with `The port 'COMxx' does not exist.`
 
 ## Handy commands
 
