@@ -78,7 +78,18 @@ REM ===========================================================================
 REM  Listening mode, then (re)detect the live COM port for this device
 REM ===========================================================================
 echo.
-echo [*] Put the device in LISTENING mode ^(hold SETUP until blinking blue^), then continue.
+REM Best-effort: flip the device into listening mode over USB so you don't have
+REM to reach for the SETUP button. This is what rescues a device that's running
+REM its app (breathing cyan) and answering serial with a "semaphore timeout" -
+REM it won't take the claim code until it's actually in listening mode. The USB
+REM control request times out if the device is mid-connect, so it's only a
+REM convenience; the physical button below is the reliable fallback.
+if defined DEVICE_ID (
+  echo [*] Attempting to enter listening mode over USB ^(particle usb start-listening^)...
+  particle usb start-listening %DEVICE_ID% >nul 2>&1 && echo [*] start-listening sent. || echo [warn] start-listening failed/timed out - use the SETUP button.
+  timeout /t 3 /nobreak >nul
+)
+echo [*] Device should be in LISTENING mode ^(blinking blue^). If not, hold SETUP until blinking blue.
 pause
 
 echo [*] Locating the device on serial ^(its port can change in listening mode^)...

@@ -159,8 +159,19 @@ restarts it.
 
 `send-claim-code.ps1` is the helper the batch calls for step 3 — pure-batch can't do raw
 serial reliably. It reads the access token from the CLI config, asks the cloud for a claim
-code, and pushes it with the `C`/prompt protocol (char-by-char). Can be run standalone:
+code, and pushes it with the `C`/prompt protocol (char-by-char). It now **retries the whole
+push up to 3 times** (`-Retries`), guards every serial write, and re-opens the port to verify
+rather than hard-failing when the flaky USB CDC port drops right after the send. Listening-mode
+detection accepts BOTH the JSON `i` reply (`deviceId`, older Device OS) and the plain
+`Your device id is <id>` reply (current Device OS) — the old check only matched `deviceId`, so
+it warned on every modern device even when listening mode was fine, and `exit 2` on a transient
+drop made the batch abort a claim that had actually succeeded. Can be run standalone:
 `powershell -NoProfile -ExecutionPolicy Bypass -File .\send-claim-code.ps1 -Port COM26`.
+
+`claim-photon.bat` also tries `particle usb start-listening <id>` automatically (best-effort)
+before the manual SETUP-button pause, so a device still running its app (breathing cyan, serial
+answering with a "semaphore timeout") gets flipped into listening mode without touching the
+button. The button remains the fallback when the USB request times out mid-connect.
 
 ## Worked example — claiming a Photon owned by another account (2026-06-14)
 
@@ -190,6 +201,29 @@ surfaced two bugs since fixed: the batch must push the **claim code before Wi-Fi
 restarts the device out of listening mode), and the device-resolution block had to be
 flattened (a nested `if`/`for` was dropping `COM_PORT`, so an empty `-Port` reached the claim
 step). With those fixed the script claims a device in one run.
+
+## Worked example — claiming two more Photons + adoption fixes (2026-06-16)
+
+Two unclaimed Photons (`3e0020000a47353137323334` → now `PVDXRDPQ`, and
+`3b0029000a47353137323334` → now `QNHD7GHG`), both claimed to a *different* account (same
+old-batch serial suffix `…47353137323334`), plus a Gen3 Asset Tracker/Monitor One on serial
+(left alone — this tooling is Photon-only). Both Photons force-claimed cleanly with the
+claim-code-over-serial flow; each appeared **online under our account within ~10 s** of the
+Wi-Fi-triggered restart. What this run exposed about *adoption in listening mode*:
+
+- **`3e00…` was already in listening mode** and `send-claim-code.ps1` printed the scary
+  `Device did not return info JSON` warning even though the push succeeded — because current
+  Device OS answers `i` with `Your device id is <id>`, not JSON with `deviceId`. Cosmetic, but
+  it makes a working claim look broken. **Fixed:** detection now matches `device id is` too.
+- **`3b00…` was running its app** (breathing cyan); serial writes failed with
+  `The semaphore timeout period has expired` — the device won't accept the claim code until
+  it's actually in listening mode. `particle usb start-listening <id>` flipped it without the
+  SETUP button, after which the push worked. **Fixed:** `claim-photon.bat` now calls
+  `start-listening` automatically before the manual button pause.
+- **Real adoption-failure root cause:** the helper used to `exit 2` whenever it couldn't read
+  back `Claim code set to`, which the flaky USB CDC port often drops *after* the code was
+  already sent — making the batch `goto :fail` on a claim that had actually succeeded.
+  **Fixed:** the push now retries up to 3×, guards every write, and re-opens to verify.
 
 ## Sources of Particle information
 
