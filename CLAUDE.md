@@ -134,30 +134,45 @@ particle keys server                  # restore Particle cloud server key (DFU m
 
 ## Scripted workflow
 
-`claim-photon.bat` automates the whole thing (update → Wi-Fi → claim → verify/rename):
+`claim-photon.bat` is a thin launcher: it confirms login, loads `.env` (exporting the keys as
+environment variables), and hands off to **`photon-manager.ps1`**, the menu-driven orchestrator.
 
 1. `copy .env.example .env` and fill in `WIFI_SSID` / `WIFI_PASSWORD`
-   (optionally `COM_PORT`, `DEVICE_ID`, `DEVICE_NAME`, `SKIP_UPDATE`). `.env` is gitignored.
-2. Run `claim-photon.bat`. If `COM_PORT` is unset it runs **discovery** (`select-device.ps1`):
-   every device on serial is listed with its ID, cloud name, Device OS version, and
-   online/offline status; with more than one connected you pick from a numbered menu
-   (a single device is auto-selected). It then prompts you to switch the device into the
-   right LED mode (DFU/blinking-yellow for the optional Device OS update, then
-   listening/blinking-blue for the claim + Wi-Fi), and polls `particle list` until the
-   device is online and claimed, renaming it if `DEVICE_NAME` is set.
+   (optionally `WIFI_SECURITY`, `DEVICE_NAME`, `DEVICE_ID`, `SKIP_UPDATE`). `.env` is gitignored.
+   Leave `DEVICE_ID` blank to get the menu; set it to claim one specific device and skip the menu.
+2. Run `claim-photon.bat`. It prints an inventory of **every** device on USB and a menu.
 
-**Order matters:** the script pushes the **claim code first, then Wi-Fi** — both in one
-listening-mode session. Setting Wi-Fi restarts the Photon; it then reconnects presenting the
-stored claim code, and the cloud transfers ownership. Doing Wi-Fi first would restart the
-device out of listening mode before the claim code could be set (this was a real bug — the
-claim step found the device gone). No separate `usb reset` is needed; the Wi-Fi step is what
-restarts it.
+**Inventory** comes from `particle usb list` — the only command that sees a device in **DFU
+mode** (a DFU device has no serial interface, so `particle serial list` misses it). Each device
+shows its **mode** (`LISTENING` / `DFU` / `running`), COM port (if on serial), ID, and account
+status. Ownership is cross-referenced against `GET /v1/devices`; the COM port for claims comes
+from `particle serial list`. Only **claimable** Photons (Gen2, not already in your account) get a
+selection number — devices you already own and non-Photons (e.g. a Gen3 Tracker) are listed but
+**locked out** of claiming.
 
-`select-device.ps1` enriches each connected device: Device OS comes from a serial `i` probe
-(falling back to the cloud's `system_firmware_version`); name/online come from
-`GET /v1/devices`. Devices owned by another account show `(not in your account)`.
+**Menu actions:**
+- **AUTO** — *the default (just press Enter)*. Updates Device OS on **every device in DFU mode**
+  and claims **every unclaimed device in listening mode**, keyed off each device's *current* LED
+  mode. Devices that aren't in DFU or listening are left alone. (A device updated this run reboots
+  out of DFU; put it in listening mode and run AUTO again to claim it.)
+- **C** — claim **all** claimable devices (best-effort `start-listening` for ones not already
+  blinking blue).
+- **U** — update Device OS on **all** connected Photons (`particle update <id>` targets each by ID).
+- **`<#>`** — claim a single device by its number.
 
-`send-claim-code.ps1` is the helper the batch calls for step 3 — pure-batch can't do raw
+**Order matters:** for each claim the manager pushes the **claim code first, then Wi-Fi** — both in
+one listening-mode session. Setting Wi-Fi restarts the Photon; it then reconnects presenting the
+stored claim code, and the cloud transfers ownership. Doing Wi-Fi first would restart the device
+out of listening mode before the claim code could be set (a real bug we hit). No separate
+`usb reset` is needed; the Wi-Fi step is what restarts it. After claiming, the manager polls
+`particle list` (~90 s) and reports each device online, renaming a single claimed device if
+`DEVICE_NAME` is set.
+
+`photon-manager.ps1` can also run non-interactively: `-Action auto|claimall|updateall`. It reads
+Wi-Fi/options from the same `$env:WIFI_*` / `$env:DEVICE_*` / `$env:SKIP_UPDATE` variables the
+batch exports. (It replaces the old `select-device.ps1`, whose enrich/select role is folded in.)
+
+`send-claim-code.ps1` is the helper the manager calls for the claim push — pure-batch can't do raw
 serial reliably. It reads the access token from the CLI config, asks the cloud for a claim
 code, and pushes it with the `C`/prompt protocol (char-by-char). It now **retries the whole
 push up to 3 times** (`-Retries`), guards every serial write, and re-opens the port to verify
@@ -168,10 +183,11 @@ it warned on every modern device even when listening mode was fine, and `exit 2`
 drop made the batch abort a claim that had actually succeeded. Can be run standalone:
 `powershell -NoProfile -ExecutionPolicy Bypass -File .\send-claim-code.ps1 -Port COM26`.
 
-`claim-photon.bat` also tries `particle usb start-listening <id>` automatically (best-effort)
-before the manual SETUP-button pause, so a device still running its app (breathing cyan, serial
-answering with a "semaphore timeout") gets flipped into listening mode without touching the
-button. The button remains the fallback when the USB request times out mid-connect.
+`photon-manager.ps1` tries `particle usb start-listening <id>` automatically (best-effort) for any
+device it needs to claim that isn't already blinking blue, so a device still running its app
+(breathing cyan, serial answering with a "semaphore timeout") gets flipped into listening mode
+without touching the button. The SETUP button remains the fallback when the USB request times out
+mid-connect — put the device in listening mode by hand and re-run.
 
 ## Worked example — claiming a Photon owned by another account (2026-06-14)
 
